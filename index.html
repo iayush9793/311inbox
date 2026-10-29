@@ -3,12 +3,12 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>Inbox Live Monitor</title>
+  <title>Gmail Live Monitor: Inbox & Spam</title>
   <style>
     * { box-sizing: border-box; margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; }
-    body { background-color: #0b0f19; color: #f1f5f9; padding: 2rem; }
+    body { background-color: #0b0f19; color: #f1f5f9; padding: 1.5rem; }
     
-    .container { max-width: 900px; margin: 0 auto; }
+    .container { max-width: 1200px; margin: 0 auto; }
     
     .header {
       display: flex;
@@ -64,17 +64,68 @@
     .btn:hover { background: #2563eb; }
     .btn.active { background: #10b981; }
 
-    .mail-feed { display: flex; flex-direction: column; gap: 0.75rem; }
-    
+    /* Dual Feed Grid */
+    .grid-layout {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 1.5rem;
+    }
+
+    @media (max-width: 820px) {
+      .grid-layout { grid-template-columns: 1fr; }
+    }
+
+    .feed-column {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+    }
+
+    .column-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding-bottom: 0.5rem;
+      border-bottom: 1px solid #1e293b;
+    }
+
+    .column-title {
+      font-size: 1rem;
+      font-weight: 700;
+      display: flex;
+      align-items: center;
+      gap: 8px;
+    }
+
+    .column-title.inbox { color: #60a5fa; }
+    .column-title.spam { color: #f87171; }
+
+    .counter-badge {
+      font-size: 0.75rem;
+      background: #1e293b;
+      padding: 2px 8px;
+      border-radius: 999px;
+      color: #94a3b8;
+    }
+
+    .mail-feed {
+      display: flex;
+      flex-direction: column;
+      gap: 0.75rem;
+      min-height: 200px;
+    }
+
     .mail-card {
       background: #131d31;
       border: 1px solid #1e293b;
-      border-left: 4px solid #3b82f6;
       border-radius: 8px;
       padding: 1rem 1.25rem;
       box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.2);
       animation: slideIn 0.3s ease-out;
     }
+
+    .mail-card.inbox { border-left: 4px solid #3b82f6; }
+    .mail-card.spam { border-left: 4px solid #ef4444; background: #1a1520; }
     
     @keyframes slideIn {
       from { opacity: 0; transform: translateY(-8px); }
@@ -89,16 +140,18 @@
       font-size: 0.85rem;
     }
     
-    .sender { font-weight: 600; color: #93c5fd; }
+    .sender { font-weight: 600; color: #cbd5e1; }
+    .inbox .sender { color: #93c5fd; }
+    .spam .sender { color: #fca5a5; }
     .date { color: #64748b; font-size: 0.75rem; }
-    .subject { font-size: 1rem; font-weight: 600; color: #f8fafc; margin-bottom: 0.35rem; }
-    .snippet { font-size: 0.85rem; color: #94a3b8; line-height: 1.4; }
+    .subject { font-size: 0.95rem; font-weight: 600; color: #f8fafc; margin-bottom: 0.35rem; }
+    .snippet { font-size: 0.85rem; color: #94a3b8; line-height: 1.4; word-break: break-word; }
     
     .empty-state {
       text-align: center;
-      padding: 3rem 1rem;
+      padding: 2.5rem 1rem;
       color: #64748b;
-      font-size: 0.95rem;
+      font-size: 0.85rem;
       border: 1px dashed #1e293b;
       border-radius: 8px;
     }
@@ -109,7 +162,7 @@
   <div class="container">
     <div class="header">
       <div class="title-group">
-        <h1>Gmail Inbox Monitor</h1>
+        <h1>Gmail Live Monitor</h1>
         <p>Account: <strong>agarwalkartik311</strong> &bull; Poll interval: <strong>5s</strong></p>
       </div>
       <div class="controls">
@@ -121,8 +174,28 @@
       </div>
     </div>
 
-    <div id="feed" class="mail-feed">
-      <div class="empty-state" id="placeholder">Listening for incoming emails...</div>
+    <div class="grid-layout">
+      <!-- Inbox Column -->
+      <div class="feed-column">
+        <div class="column-header">
+          <span class="column-title inbox">&#9993; Inbox</span>
+          <span class="counter-badge" id="inboxCount">0 new</span>
+        </div>
+        <div id="inboxFeed" class="mail-feed">
+          <div class="empty-state" id="inboxPlaceholder">Listening for inbox emails...</div>
+        </div>
+      </div>
+
+      <!-- Spam Column -->
+      <div class="feed-column">
+        <div class="column-header">
+          <span class="column-title spam">&#9888; Spam</span>
+          <span class="counter-badge" id="spamCount">0 new</span>
+        </div>
+        <div id="spamFeed" class="mail-feed">
+          <div class="empty-state" id="spamPlaceholder">Listening for spam emails...</div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -138,9 +211,11 @@
     const knownIds = new Set();
     let initialSyncComplete = false;
     let audioCtx = null;
+    let inboxCount = 0;
+    let spamCount = 0;
 
-    // Web Audio Synthesizer (Generates clean two-tone chime without external files)
-    function playChime() {
+    // Dual-mode audio chime: distinct tones for inbox vs spam
+    function playChime(isSpam = false) {
       if (!audioCtx) return;
       if (audioCtx.state === 'suspended') audioCtx.resume();
 
@@ -148,33 +223,39 @@
       const osc = audioCtx.createOscillator();
       const gain = audioCtx.createGain();
 
-      osc.type = 'sine';
-      // Pitch ramp: E5 (659.25Hz) to B5 (987.77Hz)
-      osc.frequency.setValueAtTime(659.25, now);
-      osc.frequency.setValueAtTime(987.77, now + 0.1);
+      osc.type = isSpam ? 'sawtooth' : 'sine';
 
-      gain.gain.setValueAtTime(0.2, now);
-      gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+      if (isSpam) {
+        // Lower descending alert tone for spam: G4 to C4
+        osc.frequency.setValueAtTime(392.00, now);
+        osc.frequency.setValueAtTime(261.63, now + 0.15);
+        gain.gain.setValueAtTime(0.12, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.5);
+      } else {
+        // High ascending chime for inbox: E5 to B5
+        osc.frequency.setValueAtTime(659.25, now);
+        osc.frequency.setValueAtTime(987.77, now + 0.1);
+        gain.gain.setValueAtTime(0.2, now);
+        gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.7);
+      }
 
       osc.connect(gain);
       gain.connect(audioCtx.destination);
 
       osc.start(now);
-      osc.stop(now + 0.7);
+      osc.stop(now + (isSpam ? 0.5 : 0.7));
     }
 
-    // Browsers block autoplay until user clicks once
     function toggleAudio() {
       const btn = document.getElementById('audioBtn');
       if (!audioCtx) {
         audioCtx = new (window.AudioContext || window.webkitAudioContext)();
         btn.textContent = "Audio Enabled";
         btn.classList.add('active');
-        playChime();
+        playChime(false);
       }
     }
 
-    // Refresh OAuth Access Token via Google OAuth endpoint
     async function getValidAccessToken() {
       const now = Date.now();
       if (accessToken && now < tokenExpiryTime) {
@@ -203,7 +284,6 @@
       return accessToken;
     }
 
-    // Fetch individual message details
     async function fetchMessageDetails(id, token) {
       const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages/${id}?format=metadata&metadataHeaders=Subject&metadataHeaders=From&metadataHeaders=Date`, {
         headers: { Authorization: `Bearer ${token}` }
@@ -221,39 +301,55 @@
       };
     }
 
-    // Main poll routine
+    async function fetchQuery(query, token) {
+      const res = await fetch(`https://gmail.googleapis.com/gmail/v1/users/me/messages?q=${encodeURIComponent(query)}&maxResults=10`, {
+        headers: { Authorization: `Bearer ${token}` }
+      });
+      const data = await res.json();
+      return data.messages || [];
+    }
+
     async function checkInbox() {
       const statusEl = document.getElementById("pollStatus");
       try {
         const token = await getValidAccessToken();
         statusEl.textContent = "Active";
 
-        // Query only unread inbox messages
-        const listRes = await fetch("https://gmail.googleapis.com/gmail/v1/users/me/messages?q=is:inbox is:unread&maxResults=10", {
-          headers: { Authorization: `Bearer ${token}` }
-        });
+        // Query both inbox and spam concurrently
+        const [inboxMessages, spamMessages] = await Promise.all([
+          fetchQuery("is:inbox is:unread", token),
+          fetchQuery("in:spam", token)
+        ]);
 
-        const listData = await listRes.json();
-        const messages = listData.messages || [];
-
-        // Identify completely new IDs not yet tracked
-        const newMessages = messages.filter(m => !knownIds.has(m.id));
+        const newInbox = inboxMessages.filter(m => !knownIds.has(m.id));
+        const newSpam = spamMessages.filter(m => !knownIds.has(m.id));
 
         if (!initialSyncComplete) {
-          // First load: record baseline without buzzing on stale unreads
-          messages.forEach(m => knownIds.add(m.id));
+          inboxMessages.forEach(m => knownIds.add(m.id));
+          spamMessages.forEach(m => knownIds.add(m.id));
           initialSyncComplete = true;
-          document.getElementById("placeholder").textContent = "Inbox monitored. Waiting for incoming mail...";
+
+          document.getElementById("inboxPlaceholder").textContent = "Inbox monitored. Waiting for incoming mail...";
+          document.getElementById("spamPlaceholder").textContent = "Spam monitored. Waiting for incoming spam...";
           return;
         }
 
-        if (newMessages.length > 0) {
-          playChime();
-
-          for (const msg of newMessages) {
+        if (newInbox.length > 0) {
+          playChime(false);
+          for (const msg of newInbox) {
             knownIds.add(msg.id);
             const details = await fetchMessageDetails(msg.id, token);
-            renderEmail(details);
+            renderEmail(details, 'inbox');
+          }
+        }
+
+        if (newSpam.length > 0) {
+          // Play spam tone only if inbox hasn't already chimed this tick
+          if (newInbox.length === 0) playChime(true);
+          for (const msg of newSpam) {
+            knownIds.add(msg.id);
+            const details = await fetchMessageDetails(msg.id, token);
+            renderEmail(details, 'spam');
           }
         }
       } catch (err) {
@@ -262,13 +358,25 @@
       }
     }
 
-    function renderEmail(mail) {
-      const feed = document.getElementById("feed");
-      const placeholder = document.getElementById("placeholder");
+    function renderEmail(mail, category) {
+      const feedId = category === 'spam' ? 'spamFeed' : 'inboxFeed';
+      const placeholderId = category === 'spam' ? 'spamPlaceholder' : 'inboxPlaceholder';
+      const countId = category === 'spam' ? 'spamCount' : 'inboxCount';
+
+      const feed = document.getElementById(feedId);
+      const placeholder = document.getElementById(placeholderId);
       if (placeholder) placeholder.remove();
 
+      if (category === 'spam') {
+        spamCount++;
+        document.getElementById(countId).textContent = `${spamCount} new`;
+      } else {
+        inboxCount++;
+        document.getElementById(countId).textContent = `${inboxCount} new`;
+      }
+
       const card = document.createElement("div");
-      card.className = "mail-card";
+      card.className = `mail-card ${category}`;
       card.innerHTML = `
         <div class="mail-header">
           <span class="sender">${escapeHtml(mail.from)}</span>
@@ -287,7 +395,6 @@
       })[m]);
     }
 
-    // Start cycle immediately, then every 5 seconds
     checkInbox();
     setInterval(checkInbox, 5000);
   </script>
